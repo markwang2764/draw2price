@@ -27,7 +27,8 @@
 ```bash
 cd backend && python run.py        # 后端 :8000,文档 /docs
 cd frontend && npm run dev         # 前端 :3000
-# 需配 backend/.env 的 MISTRAL_API_KEY / MISTRAL_BASE_URL
+# 需配 backend/.env 的 MISTRAL_API_KEY / MISTRAL_BASE_URL(参考 .env.example)
+# 当前 .env 仅有 DATABASE_URL,缺 AI key → 真实 AI 调用会 401(后端仍能启动)
 ```
 
 ## 现有代码结构(改造前)
@@ -57,8 +58,8 @@ cd frontend && npm run dev         # 前端 :3000
 ### 模块与进度
 | # | 模块 | spec | 状态 |
 |---|------|------|------|
-| M0 | 编排骨架+工具抽取 | ../../../../mark_dev/agent-orchestra/specs/maf-orchestrator.md | 板子#2 pending,待Cursor |
-| M1 | 识别Agent | (待写) | - |
+| M0 | 编排骨架+工具抽取 | (spec 目录暂缺) | ✅ 跑通(占位流水线,测试绿) |
+| M1 | 识别Agent | (待写) | 下一步 |
 | M2 | 工艺Agent | (待写) | - |
 | M3 | G代码Agent(并行) | (待写) | - |
 | M4 | 排产Agent | (待写) | - |
@@ -66,7 +67,23 @@ cd frontend && npm run dev         # 前端 :3000
 | M6 | 审查Agent ★灵魂 | (待写) | - |
 | M7 | 流式整合 | (待写) | - |
 
-> spec 实际存于 agent-orchestra/specs/(与编排层共享)。M0 跑通后再写 M1/M2。
+> 注:`agent-orchestra/specs/` 目录当前不存在,MCP 板子链路暂断。
+> M0 已由主控直接落地(非走 Cursor):骨架在 `backend/app/orchestration/`,
+> 6 节点为占位实现,`pytest tests/test_orchestration tests/test_tools` 全绿。
+
+### 本次进展(2026-06-19)
+- **修复启动崩溃**:`config.py` 的 Settings 未声明 `.env` 里的 `DATABASE_URL`,
+  pydantic v2 默认 `extra_forbidden` → import 时即崩。已加字段 + `extra="ignore"`。
+- **横切准确度改进 A**(改共享 API 层,不碰业务逻辑):
+  - `_call_api`/`_call_vision_api` 新增 `json_mode=True`(默认),走 `response_format`
+    结构化 JSON 输出(云端)/Ollama `format:json`,可传 False 回退。
+  - `analyze_drawing` 解析失败不再静默返回假 45 钢零件,改为 `confidence:"low"` + error,
+    交下游/M6 审查处理。配套测试 `tests/test_services/test_structured_output.py`。
+- **编排 bug 修复**:`nodes/_append_event` 误返回整个累积列表,与 `operator.add`
+  reducer 重复累加导致事件 47 个(应 6),违反 SSE 兼容铁律。已修 + 加回归断言。
+- **训练路线**:`docs/本地训练待办.md`(Mac 无 CUDA,改 N卡/云GPU 做 QLoRA 文本微调)。
+- 代码已推 `git@github.com:markwang2764/draw2price.git`(main)。
+  注:`.env`/venv/向量库/HF模型缓存/PDF 均被 `.gitignore` 排除,新机器需重建。
 
 ## 协作模式
 
