@@ -1,0 +1,314 @@
+{
+  "company_name": "隆而法液压",
+  "equipment": [
+    {
+      "id": "CNC-001",
+      "name": "数控车床-1号",
+      "type": "CNC_LATHE",
+      "brand": "沈阳机床",
+      "model": "CAK6150",
+      "status": "available",
+      "capabilities": [
+        "车削",
+        "螺纹加工",
+        "端面加工"
+      ],
+      "max_diameter": 500,
+      "max_length": 1000,
+      "accuracy": 0.01,
+      "hourly_rate": 85
+    },
+    {
+      "id": "CNC-002",
+      "name": "数控车床-2号",
+      "type": "CNC_LATHE",
+      "brand": "大连机床",
+      "model": "CJK-40",
+      "status": "available",
+      "capabilities": [
+        "车削",
+        "螺纹加工",
+        "精车"
+      ],
+      "max_diameter": 400,
+      "max_length": 800,
+      "accuracy": 0.008,
+      "hourly_rate": 80
+    },
+    {
+      "id": "CNC-003",
+      "name": "数控铣床-1号",
+      "type": "CNC_MILL",
+      "brand": "大连机床",
+      "model": "VDL-1000",
+      "status": "available",
+      "capabilities": [
+        "铣削",
+        "钻孔",
+        "攻丝",
+        "镗孔"
+      ],
+      "work_table": [
+        1000,
+        500
+      ],
+      "spindle_speed": 8000,
+      "accuracy": 0.008,
+      "hourly_rate": 100
+    },
+    {
+      "id": "VMC-001",
+      "name": "立式加工中心-1号",
+      "type": "MACHINING_CENTER",
+      "brand": "马扎克",
+      "model": "VTC-200C",
+      "status": "available",
+      "capabilities": [
+        "铣削",
+        "钻孔",
+        "攻丝",
+        "镗孔",
+        "多面加工"
+      ],
+      "work_table": [
+        800,
+        400
+      ],
+      "spindle_speed": 12000,
+      "tool_magazine": 24,
+      "accuracy": 0.005,
+      "hourly_rate": 180
+    },
+    {
+      "id": "VMC-002",
+      "name": "立式加工中心-2号",
+      "type": "MACHINING_CENTER",
+      "brand": "发那科",
+      "model": "FMC-1160",
+      "status": "available",
+      "capabilities": [
+        "铣削",
+        "钻孔",
+        "攻丝",
+        "高速加工"
+      ],
+      "work_table": [
+        1100,
+        600
+      ],
+      "spindle_speed": 10000,
+      "tool_magazine": 20,
+      "accuracy": 0.005,
+      "hourly_rate": 160
+    },
+    {
+      "id": "GRIND-001",
+      "name": "外圆磨床-1号",
+      "type": "GRINDER",
+      "brand": "上海机床",
+      "model": "MK1320",
+      "status": "available",
+      "capabilities": [
+        "外圆磨削",
+        "精密磨削"
+      ],
+      "accuracy": 0.002,
+      "hourly_rate": 75
+    },
+    {
+      "id": "GRIND-002",
+      "name": "内圆磨床-1号",
+      "type": "GRINDER",
+      "brand": "无锡机床",
+      "model": "M215A",
+      "status": "available",
+      "capabilities": [
+        "内孔磨削",
+        "精密磨削"
+      ],
+      "accuracy": 0.002,
+      "hourly_rate": 80
+    },
+    {
+      "id": "GRIND-003",
+      "name": "无心磨床-1号",
+      "type": "GRINDER",
+      "brand": "无锡机床",
+      "model": "1206NC",
+      "status": "available",
+      "capabilities": [
+        "无心磨削",
+        "批量磨削"
+      ],
+      "accuracy": 0.003,
+      "hourly_rate": 70
+    },
+    {
+      "id": "SWISS-001",
+      "name": "走心机-1号",
+      "type": "SWISS_LATHE",
+      "brand": "津上",
+      "model": "MA25-3",
+      "status": "available",
+      "capabilities": [
+        "小件车削",
+        "复合加工",
+        "高精度"
+      ],
+      "accuracy": 0.005,
+      "hourly_rate": 120
+    },
+    {
+      "id": "DRILL-001",
+      "name": "钻床-1号",
+      "type": "DRILLING",
+      "brand": "沈阳",
+      "model": "Z5140",
+      "status": "available",
+      "capabilities": [
+        "钻孔",
+        "倒角",
+        "攻丝"
+      ],
+      "accuracy": 0.05,
+      "hourly_rate": 45
+    },
+    {
+      "id": "WELD-001",
+      "name": "焊接机-1号",
+      "type": "WELDING",
+      "brand": "松下",
+      "model": "ZHF-250T",
+      "status": "available",
+      "capabilities": [
+        "环缝焊接",
+        "直缝焊接"
+      ],
+      "hourly_rate": 60
+    },
+    {
+      "id": "cnc-001",
+      "name": "sk-1",
+      "type": "CNC_LATHE",
+      "brand": "",
+      "model": "",
+      "capabilities": [
+        "ce"
+      ],
+      "hourly_rate": 80,
+      "status": "available"
+    }
+  ],
+  "personnel": [
+    {
+      "id": "OP-001",
+      "name": "张师傅",
+      "skills": [
+        "车削",
+        "数控车床"
+      ],
+      "level": "senior",
+      "shift": "day",
+      "hourly_rate": 55
+    },
+    {
+      "id": "OP-002",
+      "name": "李工",
+      "skills": [
+        "加工中心",
+        "铣削"
+      ],
+      "level": "senior",
+      "shift": "day",
+      "hourly_rate": 60
+    },
+    {
+      "id": "OP-003",
+      "name": "王师傅",
+      "skills": [
+        "磨床",
+        "精密加工"
+      ],
+      "level": "senior",
+      "shift": "day",
+      "hourly_rate": 50
+    },
+    {
+      "id": "OP-004",
+      "name": "赵工",
+      "skills": [
+        "车削",
+        "铣削"
+      ],
+      "level": "intermediate",
+      "shift": "day",
+      "hourly_rate": 40
+    },
+    {
+      "id": "OP-005",
+      "name": "陈师傅",
+      "skills": [
+        "走心机",
+        "精密车削"
+      ],
+      "level": "senior",
+      "shift": "day",
+      "hourly_rate": 65
+    },
+    {
+      "id": "OP-006",
+      "name": "刘工",
+      "skills": [
+        "钻孔",
+        "攻丝",
+        "装配"
+      ],
+      "level": "intermediate",
+      "shift": "day",
+      "hourly_rate": 35
+    }
+  ],
+  "working_hours": {
+    "day_shift": {
+      "start": "08:00",
+      "end": "17:00"
+    },
+    "night_shift": {
+      "start": "17:00",
+      "end": "02:00"
+    },
+    "hours_per_day": 8
+  },
+  "material_costs": {
+    "45钢": 6,
+    "45#钢": 6,
+    "Q235": 4.5,
+    "40Cr": 8,
+    "304不锈钢": 18,
+    "316不锈钢": 30,
+    "6061-T6铝合金": 28,
+    "7075铝合金": 45,
+    "黄铜H62": 50,
+    "紫铜T2": 65,
+    "DT4电工纯铁": 11,
+    "GCR15轴承钢": 14,
+    "12L14易切削钢": 9,
+    "AH20纯铁": 12,
+    "弹簧钢": 70
+  },
+  "outsource_costs": {
+    "热处理-淬火": 3.5,
+    "热处理-渗碳": 5,
+    "热处理-调质": 4,
+    "电镀-镀铬": 8,
+    "电镀-镀锌": 4,
+    "阳极氧化": 6,
+    "喷砂": 2,
+    "抛丸": 1.5,
+    "酸洗": 2.5,
+    "无心磨-外协": 5,
+    "下料-外协": 2
+  },
+  "overhead_rate": 0.15,
+  "profit_rate": 0.18
+}

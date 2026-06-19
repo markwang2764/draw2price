@@ -1,0 +1,221 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Industrial Tech Palette */
+  --tech-cyan: #06b6d4; /* Precision/Laser */
+  --tech-blue: #3b82f6; /* Information */
+  --tech-orange: #f97316; /* Warning/Attention */
+  --tech-green: #10b981; /* Success/Safe */
+  --tech-bg: #0b1121; /* Deep Space/Carbon */
+  --tech-panel: #151e32; /* Panel Background */
+  --tech-border: #334155; /* Structural Border */
+
+  --primary-glow: rgba(6, 182, 212, 0.4); /* Cyan Glow */
+  --accent-glow: rgba(249, 115, 22, 0.4); /* Orange Glow */
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, monospace;
+  background-color: var(--tech-bg);
+  color: #e2e8f0;
+  overflow-x: hidden;
+}
+
+/* Mechanical Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+  border-left: 1px solid #1e293b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border: 1px solid #0f172a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Industrial Panel (Glass + Metal) */
+.glass-panel {
+  background: rgba(21, 30, 50, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+/* Tech Corners Effect (Visual only) */
+.glass-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--tech-cyan);
+  border-left: 2px solid var(--tech-cyan);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glass-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-bottom: 2px solid var(--tech-cyan);
+  border-right: 2px solid var(--tech-cyan);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glass-card:hover {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(6, 182, 212, 0.3);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.1);
+}
+
+.glass-card:hover::before,
+.glass-card:hover::after {
+  opacity: 1;
+}
+
+/* Precision Button */
+.btn-neon {
+  background: linear-gradient(180deg, rgba(6, 182, 212, 0.1) 0%, rgba(6, 182, 212, 0.2) 100%);
+  border: 1px solid var(--tech-cyan);
+  color: #a5f3fc;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.1);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.btn-neon:hover {
+  background: rgba(6, 182, 212, 0.25);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+  text-shadow: 0 0 5px rgba(6, 182, 212, 0.8);
+  transform: translateY(-1px);
+}
+
+.btn-neon:active {
+  transform: translateY(1px);
+}
+
+/* System Monitor / Terminal */
+.ai-terminal {
+  background: #050a14;
+  border: 1px solid #1e293b;
+  position: relative;
+  font-family: 'JetBrains Mono', 'Menlo', 'Courier New', monospace;
+}
+
+.ai-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.2em;
+  background-color: var(--tech-cyan);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+/* Holographic Scanline */
+.scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(to bottom, transparent 50%, rgba(6, 182, 212, 0.05) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes scan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100%;
+  }
+}
+
+/* Technical Input */
+.input-tech {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all 0.2s;
+}
+
+.input-tech:focus {
+  border-color: var(--tech-cyan);
+  box-shadow: 0 0 0 1px var(--tech-cyan);
+  outline: none;
+  background: rgba(15, 23, 42, 0.95);
+}
+
+/* Progress Steps */
+.step-glow.active {
+  border-color: var(--tech-cyan);
+  box-shadow: 0 0 10px var(--primary-glow);
+  color: var(--tech-cyan);
+}
+
+.step-glow.completed {
+  border-color: var(--tech-green);
+  color: var(--tech-green);
+}
+
+/* Blueprint Grid Background */
+.bg-grid {
+  background-size: 40px 40px;
+  background-image: linear-gradient(to right, rgba(6, 182, 212, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(6, 182, 212, 0.05) 1px, transparent 1px);
+  position: relative;
+}
+
+.bg-grid::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle at center, transparent 0%, var(--tech-bg) 80%);
+  pointer-events: none;
+}

@@ -1,0 +1,47 @@
+# ===== 密钥 / 环境 =====
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ===== Python =====
+venv/
+backend/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ===== Node / 前端 =====
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+*.log
+
+# ===== 向量库 / 运行期数据 =====
+backend/knowledge_base/chroma_db/
+backend/knowledge_base/models/
+# HuggingFace 模型缓存(sentence-transformers 等),几百 MB,不进 git
+**/models--*/
+*.sqlite3
+
+# ===== 导出 / 上传产物 =====
+exports/
+backend/exports/
+uploads/
+backend/uploads/
+
+# ===== 业务 / 私人文件(慧银科技数据,勿外推) =====
+*.pdf
+*.jpg
+*.jpeg
+*.png
+WechatIMG*.jpg
+
+# ===== 系统 =====
+.DS_Store
+.idea/
+.vscode/
