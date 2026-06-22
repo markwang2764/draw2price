@@ -279,6 +279,20 @@ def review_node(state: AnalysisState) -> Dict[str, Any]:
         for w in prog.get("_warnings", []):
             issues.append({"severity": "major", "rule": "param_range", "message": w})
 
+    # 规则 6: G代码 ISO 6983 语法校验（无效G/M码、行程越界）
+    from ..tools.gcode_validator import validate_gcode
+    for prog in gcode_programs:
+        code = prog.get("code", "")
+        if not code or code.strip().startswith(";"):
+            continue
+        gv_issues = validate_gcode(code)
+        for gi in gv_issues:
+            issues.append({
+                "severity": gi["severity"],
+                "rule": gi["rule"],
+                "message": f"程序 {prog.get('program_number', '?')} 第{gi['line']}行: {gi['detail']}",
+            })
+
     critical = [i for i in issues if i["severity"] == "critical"]
     status = "blocked" if critical else ("requires_review" if issues else "approved")
 
