@@ -1,13 +1,14 @@
 """
 MistralAI 制造工艺分析系统 - 主入口
 """
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import os
 
 from app.routers import analysis, export, resources, analysis_stream, knowledge
 from app.core.config import settings
+from app.middleware.auth import APIKeyMiddleware
 
 app = FastAPI(
     title="智能制造工艺分析系统",
@@ -15,14 +16,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS配置
+# CORS：明确列出允许来源，不用通配符
+_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# API Key 认证（设置 API_KEY 环境变量后生效，不设则跳过）
+app.add_middleware(APIKeyMiddleware)
 
 # 注册路由
 app.include_router(analysis.router, prefix="/api/analysis", tags=["工艺分析"])

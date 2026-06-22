@@ -812,9 +812,16 @@ G代码要求：
         
         return fixed
 
+    # 切削参数合法范围：超出则标记 warning，不静默归零
+    _PARAM_RANGES = {
+        'spindle_speed':  (50.0,   8000.0),   # RPM
+        'feed_rate':      (0.05,   2.0),       # mm/r
+        'depth_of_cut':   (0.05,   15.0),      # mm
+        'utilization_rate': (0.0,  1.0),       # 0~1
+    }
+
     def _sanitize_dimensions(self, data: Any) -> Any:
-        """递归清理数据，将无效的数值字段替换为0"""
-        # 需要转换为float的字段名
+        """递归清理数据：数值字段转 float，安全关键参数校验范围并注入 _warnings"""
         FLOAT_FIELDS = {
             'dimensions', 'overall_dimensions', 'blank_dimensions',
             'total_hours', 'utilization_rate', 'estimated_time_minutes',
@@ -823,25 +830,32 @@ G代码要求：
             'subtotal', 'overhead', 'profit', 'total', 'unit_price', 'total_price',
             'spindle_speed', 'feed_rate', 'depth_of_cut', 'quantity'
         }
-        
+
         if isinstance(data, dict):
             cleaned = {}
+            warnings = []
             for k, v in data.items():
-                # dimensions相关的键，其值是字典，需要转换字典内的值
                 if k in ['dimensions', 'overall_dimensions', 'blank_dimensions']:
                     if isinstance(v, dict):
                         cleaned[k] = {dk: self._safe_float(dv) for dk, dv in v.items()}
                     else:
                         cleaned[k] = {}
-                # 数值字段，直接转换
                 elif k in FLOAT_FIELDS:
-                    cleaned[k] = self._safe_float(v)
+                    fv = self._safe_float(v)
+                    if k in self._PARAM_RANGES:
+                        lo, hi = self._PARAM_RANGES[k]
+                        if fv != 0.0 and not (lo <= fv <= hi):
+                            warnings.append(f"{k}={fv} 超出合理范围 [{lo}, {hi}]，请人工复核")
+                    cleaned[k] = fv
                 elif isinstance(v, dict):
                     cleaned[k] = self._sanitize_dimensions(v)
                 elif isinstance(v, list):
                     cleaned[k] = [self._sanitize_dimensions(item) for item in v]
                 else:
                     cleaned[k] = v
+            if warnings:
+                existing = cleaned.get('_warnings', [])
+                cleaned['_warnings'] = existing + warnings
             return cleaned
         elif isinstance(data, list):
             return [self._sanitize_dimensions(item) for item in data]

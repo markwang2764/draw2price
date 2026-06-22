@@ -29,11 +29,14 @@ def get_embedding_model():
             print("[知识库] 正在从国内镜像加载嵌入模型...")
             
             # 使用支持中文的模型
+            # bge-large-zh-v1.5: 中文技术文本专用，对机加工数值/型号 token 校准更好
+            # 备选: paraphrase-multilingual-MiniLM-L12-v2（通用，对数值辨识差）
+            model_name = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
             _embedding_model = SentenceTransformer(
-                'paraphrase-multilingual-MiniLM-L12-v2',
-                cache_folder=str(KNOWLEDGE_DIR / "models")  # 缓存到本地
+                model_name,
+                cache_folder=str(KNOWLEDGE_DIR / "models")
             )
-            print("[知识库] 嵌入模型加载完成")
+            print(f"[知识库] 嵌入模型加载完成: {model_name}")
         except Exception as e:
             print(f"[知识库] 嵌入模型加载失败: {e}")
             return None
@@ -74,10 +77,12 @@ class KnowledgeService:
     
     def __init__(self):
         self.categories = {
+            "material": "材料参数库",
+            "process": "工艺路线库",
+            "standard": "标准规范库",
             "tool": "刀具库",
-            "process_route": "工艺路线库", 
             "cost": "工时成本库",
-            "feature": "特征信息库"
+            "feature": "特征信息库",
         }
     
     def add_document(

@@ -1,6 +1,7 @@
 """
 启动后端服务
 """
+import os
 import sys
 import logging
 import uvicorn
@@ -28,11 +29,14 @@ if __name__ == "__main__":
     print("="*60)
     print()
 
+    workers = int(os.environ.get("WEB_CONCURRENCY", "4"))
+    debug_mode = os.environ.get("DEBUG", "").lower() == "true"
     uvicorn.run(
         "app.main:app",
         host=settings.host,
         port=settings.port,
-        reload=True,
+        reload=debug_mode,
+        workers=1 if debug_mode else workers,
         log_level="info",
         access_log=True
     )
