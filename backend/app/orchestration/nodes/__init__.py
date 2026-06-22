@@ -118,6 +118,13 @@ def process_node(state: AnalysisState) -> Dict[str, Any]:
         resources = _get_resources()
         process_plan = _run_async(mistral.generate_process_plan(part_analysis, resources))
 
+        # 归一化:不同模型/prompt 可能把工序列表返成 "processes" 而非约定的 "steps"，
+        # 下游 gcode/审查/排产都按 steps 读取。缺 steps 但有 processes 时做别名，避免 G代码空。
+        if isinstance(process_plan, dict) and not process_plan.get("steps") and process_plan.get("processes"):
+            process_plan["steps"] = process_plan["processes"]
+            if not process_plan.get("total_steps"):
+                process_plan["total_steps"] = len(process_plan["processes"])
+
         updates = {"process_plan": process_plan}
         updates.update(_append_event(state, "step_complete", "工艺规划完成", 2))
         _emit(state, "step_complete", step=2, title="工艺规划", result=process_plan)
@@ -230,18 +237,28 @@ def review_node(state: AnalysisState) -> Dict[str, Any]:
     equipment_ids = {eq["id"] for eq in resources.get("equipment", []) if "id" in eq}
     equipment_types = {eq["id"]: eq.get("type", "") for eq in resources.get("equipment", [])}
 
-    # 规则 1: 刀具存在性 — G代码里用到的 T 号必须在 tool_list 里
+    # 规则 1: 刀具存在性 — G代码里用到的 T 号必须在 tool_list 里。
+    # 归一化刀号:剥离 T 前缀与前导零("T01"/"01"/"1" 视为同一把),兼容 number/tool_number 两种键名,
+    # 避免因键名/格式差异把每个程序都误报为"未定义刀具"。
+    import re
+
+    def _norm_tool(s):
+        m = re.search(r"(\d+)", str(s))
+        return str(int(m.group(1))) if m else str(s).strip()
+
     for prog in gcode_programs:
         code = prog.get("code", "")
-        tool_list = {str(t.get("number", "")) for t in prog.get("tool_list", [])}
-        import re
-        used_tools = set(re.findall(r"T(\d+)", code))
-        missing = used_tools - tool_list
+        declared = {
+            _norm_tool(t.get("number") or t.get("tool_number") or "")
+            for t in prog.get("tool_list", [])
+        }
+        used_tools = {_norm_tool(x) for x in re.findall(r"T(\d+)", code)}
+        missing = used_tools - declared
         if missing:
             issues.append({
                 "severity": "critical",
                 "rule": "tool_existence",
-                "message": f"程序 {prog.get('program_number')} 使用了未定义刀具 T{missing}",
+                "message": f"程序 {prog.get('program_number')} 使用了未定义刀具 T{', T'.join(sorted(missing))}",
             })
 
     # 规则 2: 设备一致性 — 排产任务的 equipment_id 必须存在于资源表

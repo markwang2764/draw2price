@@ -602,10 +602,13 @@ async def stream_analysis_v2(
                     result = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: graph.invoke(state, config=config)
                     )
-                # 汇总结果推 complete 事件
+                # 汇总结果。字段结构与旧 /stream 的 result 保持一致（SSE 兼容铁律），
+                # 并新增 review/review_status/exportable。
                 review = result.get("review") or {}
-                await emitter.emit("complete", {
+                payload = {
                     "id": analysis_id,
+                    "created_at": datetime.now().isoformat(),
+                    "status": "completed",
                     "part_analysis": result.get("part_analysis"),
                     "process_plan": result.get("process_plan"),
                     "gcode_programs": result.get("gcode_programs", []),
@@ -615,6 +618,14 @@ async def stream_analysis_v2(
                     "review_status": review.get("status", "approved"),
                     "exportable": review.get("status") != "blocked",
                     "errors": result.get("errors", []),
+                }
+                # 持久化到 analyses.db（与导出端点 analysis_service.get_analysis 同一来源），
+                # 否则前端按 id 导出会 404。
+                analysis_service._save(payload)
+                await emitter.emit("complete", {
+                    "id": analysis_id,
+                    "message": "分析完成",
+                    "result": payload,
                 })
             except Exception as e:
                 await emitter.emit("error", {"message": f"编排异常: {e}"})

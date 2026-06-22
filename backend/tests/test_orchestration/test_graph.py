@@ -97,3 +97,36 @@ async def test_graph_ainvoke_produces_all_outputs():
     # identify/process/gcode/schedule/review/quotation = 6 节点各 1 事件。
     assert len(result["events"]) == 6, f"事件数应为 6，实际 {len(result['events'])}"
     assert all(e["type"] == "step_complete" for e in result["events"][:-1])
+
+
+class _Unserializable:
+    """模拟 StreamEventEmitter：有 emit_sync 但带 lambda 属性，msgpack 无法序列化。"""
+    def __init__(self):
+        self.sock = lambda: None  # lambda 不可 msgpack 序列化
+
+    def emit_sync(self, *args, **kwargs):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_graph_runs_with_unserializable_object_in_state():
+    """回归:state 携带 _emitter(不可序列化) 时图必须能跑通。
+
+    曾因默认挂 MemorySaver,每步用 msgpack 存档整个 state →
+    'Type is not msgpack serializable: StreamEventEmitter' 在所有节点跑完后崩溃。
+    build_graph 默认不挂 checkpointer 后应正常完成。
+    """
+    mock_mistral = _make_mock_mistral()
+    with patch("app.orchestration.nodes._get_mistral", return_value=mock_mistral):
+        graph = build_graph()
+        result = await graph.ainvoke(
+            {
+                "input": {"description": "测试零件", "equipment": []},
+                "_emitter": _Unserializable(),   # 不可序列化对象
+                "events": [],
+                "errors": [],
+                "gcode_programs": [],
+            },
+            config={"configurable": {"thread_id": "test-unserializable"}},
+        )
+    assert result["quotation"]["total"] == 1000.0  # 跑到了最后一个节点 → 未在中途序列化崩溃

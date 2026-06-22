@@ -66,4 +66,8 @@ def build_graph(checkpointer=None):
     g.add_conditional_edges(NODE_REVIEW, _route_after_review, {NODE_QUOTATION: NODE_QUOTATION, END: END})
     g.add_edge(NODE_QUOTATION, END)
 
-    return g.compile(checkpointer=checkpointer or MemorySaver())
+    # 默认不挂 checkpointer：state 里携带 _emitter(StreamEventEmitter)等不可序列化对象，
+    # MemorySaver 每步会用 msgpack 存档整个 state → 直接崩
+    # (Type is not msgpack serializable: StreamEventEmitter)。
+    # 单次请求不需要断点续跑；需要时显式传入 checkpointer 且确保 state 可序列化。
+    return g.compile(checkpointer=checkpointer)

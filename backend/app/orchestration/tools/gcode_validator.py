@@ -69,7 +69,11 @@ def validate_gcode(
             for axis, limit in [('X', max_travel_x), ('Y', max_travel_y), ('Z', max_travel_z)]:
                 match = re.search(rf'{axis}([-\d.]+)', line, re.IGNORECASE)
                 if match:
-                    val = abs(float(match.group(1)))
+                    try:
+                        val = abs(float(match.group(1)))
+                    except ValueError:
+                        # 畸形轴值(如 "X-"、"Z." 无数字)——校验器自身不能被坏码搞崩
+                        continue
                     if val > limit:
                         issues.append({
                             "line": line_num, "severity": "critical",

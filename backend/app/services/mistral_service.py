@@ -677,14 +677,15 @@ G代码要求：
         except (ValueError, TypeError):
             quantity = 1
         
-        # 预先计算所有费用 - 使用公司实际配置
-        total_hours = float(schedule.get('total_hours', 2) or 2)
-        weight = float(part_analysis.get('estimated_weight', 2.5) or 2.5)
-        
+        # 预先计算所有费用 - 使用公司实际配置。
+        # 用 _safe_float:模型常把未知数值字段返成 "-"/"" 等,裸 float() 会崩。
+        total_hours = self._safe_float(schedule.get('total_hours', 2)) or 2
+        weight = self._safe_float(part_analysis.get('estimated_weight', 2.5)) or 2.5
+
         # 获取材料价格（从配置文件）
         material_name = part_analysis.get('material', {}).get('name', '45钢') if isinstance(part_analysis.get('material'), dict) else '45钢'
         material_costs = company_resources.get('material_costs', {})
-        material_price = float(material_costs.get(material_name, material_costs.get('45钢', 6.0)) or 6.0)
+        material_price = self._safe_float(material_costs.get(material_name, material_costs.get('45钢', 6.0))) or 6.0
         
         # 计算平均设备费率（从配置文件）
         equipment_list = company_resources.get('equipment', [])

@@ -29,6 +29,7 @@ import {
   Users,
   Plus,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import KnowledgeManager from './KnowledgeManager';
 
@@ -108,12 +109,12 @@ function App() {
         ...prev,
         {
           type: 'debug',
-          content: `[${timestamp()}] 🌐 发起请求: ${API_BASE}/analysis/stream`,
+          content: `[${timestamp()}] 🌐 发起请求: ${API_BASE}/analysis/stream/v2 (编排)`,
           timestamp: timestamp(),
         },
       ]);
 
-      const response = await fetch(`${API_BASE}/analysis/stream`, {
+      const response = await fetch(`${API_BASE}/analysis/stream/v2`, {
         method: 'POST',
         body: formData,
       });
@@ -748,6 +749,11 @@ function App() {
               {/* 分析结果 */}
               {result && (
                 <>
+                  {/* 审查结果(M6 质检关卡):编排的灵魂,交叉复核 + 不合格阻断导出 */}
+                  {result.review && (
+                    <ReviewCard review={result.review} exportable={result.exportable} />
+                  )}
+
                   {/* 零件特征 */}
                   {result.part_analysis && <PartAnalysisCard data={result.part_analysis} />}
 
@@ -771,11 +777,17 @@ function App() {
                       <Download className="h-5 w-5 mr-2 text-slate-400" />
                       导出数据
                     </h2>
+                    {result.exportable === false && (
+                      <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                        ⛔ 审查未通过(blocked),已禁止导出。请按上方审查问题人工复核后再处理。
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <ExportCard
                         label="G代码"
                         icon={Code}
                         description="数控程序 (.nc)"
+                        disabled={result.exportable === false}
                         onPreview={() => previewFile('gcode')}
                         onDownload={() => downloadFile('gcode')}
                       />
@@ -783,6 +795,7 @@ function App() {
                         label="排产计划"
                         icon={FileSpreadsheet}
                         description="生产计划 (.pdf)"
+                        disabled={result.exportable === false}
                         onPreview={() => previewFile('schedule')}
                         onDownload={() => downloadFile('schedule')}
                       />
@@ -790,6 +803,7 @@ function App() {
                         label="报价单"
                         icon={DollarSign}
                         description="成本估算 (.pdf)"
+                        disabled={result.exportable === false}
                         onPreview={() => previewFile('quotation')}
                         onDownload={() => downloadFile('quotation')}
                       />
@@ -797,6 +811,7 @@ function App() {
                         label="工艺卡片"
                         icon={Printer}
                         description="工艺路线 (.pdf)"
+                        disabled={result.exportable === false}
                         onPreview={() => previewFile('process-card')}
                         onDownload={() => downloadFile('process-card')}
                       />
@@ -1597,9 +1612,9 @@ function DownloadButton({ label, icon: Icon, onClick }) {
 }
 
 // 导出卡片组件（带预览和下载）
-function ExportCard({ label, icon: Icon, description, onPreview, onDownload }) {
+function ExportCard({ label, icon: Icon, description, onPreview, onDownload, disabled = false }) {
   return (
-    <div className="glass-card p-4 rounded-lg flex flex-col items-center justify-between border border-slate-700 hover:border-cyan-500/50 transition-all group hover:bg-slate-800/50">
+    <div className={`glass-card p-4 rounded-lg flex flex-col items-center justify-between border border-slate-700 transition-all group ${disabled ? 'opacity-40 grayscale' : 'hover:border-cyan-500/50 hover:bg-slate-800/50'}`}>
       <div className="flex flex-col items-center text-center w-full mb-4">
         <div className="w-10 h-10 bg-slate-800 rounded-lg flex items-center justify-center mb-3 group-hover:bg-cyan-500/10 transition-colors border border-slate-700 group-hover:border-cyan-500/30">
           <Icon className="h-5 w-5 text-slate-400 group-hover:text-cyan-400 transition-colors" />
@@ -1611,21 +1626,68 @@ function ExportCard({ label, icon: Icon, description, onPreview, onDownload }) {
       <div className="flex items-center gap-2 w-full">
         <button
           onClick={onPreview}
-          className="flex-1 flex items-center justify-center px-2 py-1.5 text-xs font-mono text-cyan-300 border border-cyan-500/20 bg-cyan-500/5 rounded hover:bg-cyan-500/10 transition-colors"
-          title="预览"
+          disabled={disabled}
+          className="flex-1 flex items-center justify-center px-2 py-1.5 text-xs font-mono text-cyan-300 border border-cyan-500/20 bg-cyan-500/5 rounded hover:bg-cyan-500/10 transition-colors disabled:cursor-not-allowed disabled:hover:bg-cyan-500/5"
+          title={disabled ? '审查未通过,已禁止导出' : '预览'}
         >
           <Eye className="h-3 w-3 mr-1" />
           查看
         </button>
         <button
           onClick={onDownload}
-          className="flex-1 flex items-center justify-center px-2 py-1.5 text-xs font-mono text-slate-900 bg-cyan-500 hover:bg-cyan-400 rounded transition-colors font-bold"
-          title="下载"
+          disabled={disabled}
+          className="flex-1 flex items-center justify-center px-2 py-1.5 text-xs font-mono text-slate-900 bg-cyan-500 hover:bg-cyan-400 rounded transition-colors font-bold disabled:cursor-not-allowed disabled:hover:bg-cyan-500"
+          title={disabled ? '审查未通过,已禁止导出' : '下载'}
         >
           <Download className="h-3 w-3 mr-1" />
           保存
         </button>
       </div>
+    </div>
+  );
+}
+
+// 审查结果卡片(M6 质检关卡):展示交叉复核问题,分级着色;blocked 时配合禁用导出
+function ReviewCard({ review, exportable }) {
+  const status = review.status || 'approved';
+  const issues = review.issues || [];
+  const theme = {
+    approved: { border: 'border-l-green-500', text: 'text-green-300', label: '✅ 审查通过' },
+    requires_review: { border: 'border-l-amber-500', text: 'text-amber-300', label: '⚠️ 需人工复核' },
+    blocked: { border: 'border-l-red-500', text: 'text-red-300', label: '⛔ 审查阻断(禁止导出)' },
+  }[status] || { border: 'border-l-slate-500', text: 'text-slate-300', label: status };
+
+  const sevStyle = {
+    critical: 'bg-red-500/15 text-red-300 border-red-500/30',
+    major: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    minor: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
+  };
+
+  return (
+    <div className={`glass-card rounded-xl shadow-lg border-l-4 ${theme.border} p-6`}>
+      <h2 className={`text-lg font-bold mb-1 flex items-center uppercase tracking-wide ${theme.text}`}>
+        <ShieldCheck className="h-5 w-5 mr-2" />
+        工艺审查 (M6 交叉复核)
+      </h2>
+      <p className={`text-sm mb-4 ${theme.text}`}>
+        {theme.label} · {review.summary || `共 ${issues.length} 条问题`}
+      </p>
+      {issues.length === 0 ? (
+        <p className="text-sm text-slate-400">未发现问题,方案可放行。</p>
+      ) : (
+        <ul className="space-y-2">
+          {issues.map((it, i) => (
+            <li
+              key={i}
+              className={`text-xs font-mono px-3 py-2 rounded border ${sevStyle[it.severity] || sevStyle.minor}`}
+            >
+              <span className="font-bold uppercase mr-2">[{it.severity || 'minor'}]</span>
+              <span className="opacity-70 mr-2">{it.rule}</span>
+              {it.message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
