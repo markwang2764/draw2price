@@ -523,3 +523,100 @@ async def stream_analysis(
             "Connection": "keep-alive",
         }
     )
+
+
+# ─── V2: LangGraph 编排路径 ────────────────────────────────────────────────────
+
+@router.post("/stream/v2")
+async def stream_analysis_v2(
+    file: Optional[UploadFile] = File(None),
+    description: Optional[str] = Form(None),
+    quantity: int = Form(1),
+    priority: str = Form("normal"),
+    due_date: Optional[str] = Form(None),
+    customer: Optional[str] = Form(None),
+):
+    """
+    LangGraph 编排流式接口（V2）。
+    SSE 事件类型与 /stream 完全兼容：start/thinking/step_complete/complete/error。
+    新增字段：review_status, exportable（在 complete 事件里）。
+    """
+    from app.orchestration.graph import build_graph
+    from app.orchestration.tools.stream_emitter import StreamEventEmitter
+
+    file_content = None
+    file_type = None
+    images = []
+
+    if file and file.filename:
+        file_content = await file.read()
+        ext = file.filename.lower().rsplit(".", 1)[-1]
+        if ext == "pdf":
+            raw_images = convert_pdf_to_images(file_content)
+            images = [(base64.b64encode(b).decode(), ft) for b, ft in raw_images]
+        else:
+            file_type = ext if ext in {"png", "jpg", "jpeg", "gif", "bmp", "webp"} else "png"
+            images = [(base64.b64encode(file_content).decode(), file_type)]
+
+    if not images and not description:
+        async def _err():
+            yield f"data: {json.dumps({'type': 'error', 'message': '请上传图纸或输入描述'}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def _run():
+        emitter = StreamEventEmitter()
+        graph = build_graph()
+        analysis_id = str(uuid.uuid4())[:8].upper()
+
+        state = {
+            "input": {
+                "images": images,
+                "description": description,
+                "quantity": quantity,
+                "priority": priority,
+                "due_date": due_date,
+                "customer": customer,
+            },
+            "_emitter": emitter,
+            "events": [],
+            "errors": [],
+            "gcode_programs": [],
+        }
+
+        yield f"data: {json.dumps({'type': 'start', 'id': analysis_id, 'message': '开始 LangGraph 编排分析...'}, ensure_ascii=False)}\n\n"
+
+        async def _invoke():
+            try:
+                config = {"configurable": {"thread_id": analysis_id}}
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: graph.invoke(state, config=config)
+                )
+                # 汇总结果推 complete 事件
+                review = result.get("review") or {}
+                await emitter.emit("complete", {
+                    "id": analysis_id,
+                    "part_analysis": result.get("part_analysis"),
+                    "process_plan": result.get("process_plan"),
+                    "gcode_programs": result.get("gcode_programs", []),
+                    "production_schedule": result.get("schedule"),
+                    "quotation": result.get("quotation"),
+                    "review": review,
+                    "review_status": review.get("status", "approved"),
+                    "exportable": review.get("status") != "blocked",
+                    "errors": result.get("errors", []),
+                })
+            except Exception as e:
+                await emitter.emit("error", {"message": f"编排异常: {e}"})
+            finally:
+                await emitter.close()
+
+        asyncio.create_task(_invoke())
+
+        async for chunk in emitter.events():
+            yield chunk
+
+    return StreamingResponse(
+        _run(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )

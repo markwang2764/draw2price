@@ -15,3 +15,5 @@ class AnalysisState(TypedDict, total=False):
     review: Optional[Dict[str, Any]]
     errors: Annotated[List[Dict[str, Any]], operator.add]
     events: Annotated[List[Dict[str, Any]], operator.add]
+    # SSE 桥接器（运行时注入，不序列化到 checkpointer）
+    _emitter: Optional[Any]
