@@ -7,7 +7,37 @@ import httpx
 import base64
 import io
 from typing import Optional, Dict, Any, List
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception,
+)
 from app.core.config import settings
+
+
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """仅对可重试的错误重试：429(限流) 与 5xx(服务端) 以及网络层超时/连接错误。
+
+    401/403(鉴权)、422(请求体非法) 等客户端错误重试无意义 —— 返回 False，
+    由 @retry(reraise=True) 直接抛出原异常。
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or 500 <= code < 600
+    # 超时/连接类网络错误也值得重试
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    return False
+
+
+# 指数退避重试：最多 3 次，间隔 2s→4s→…→最多 30s，仅对可重试错误生效。
+_api_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception(_is_retryable_api_error),
+    reraise=True,
+)
 
 # OCR初始化（延迟加载）
 _ocr_reader = None
@@ -94,6 +124,7 @@ class MistralService:
             traceback.print_exc()
             return ""
         
+    @_api_retry
     async def _call_api(self, messages: List[Dict], temperature: float = 0.3, model: str = None, json_mode: bool = True) -> str:
         """调用API
 
@@ -135,6 +166,7 @@ class MistralService:
             print(f"[API] 调用失败: {e}")
             raise
     
+    @_api_retry
     async def _call_vision_api(self, image_base64: str, file_type: str, prompt: str, json_mode: bool = True) -> str:
         """调用视觉模型API（支持云端和本地）
 

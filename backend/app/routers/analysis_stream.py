@@ -1,21 +1,27 @@
 """
 流式分析API - 展示AI思考过程
 """
+import os
 import json
 import asyncio
 import uuid
 import io
 from datetime import datetime
 from typing import Optional, List, Tuple
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
 import base64
 
 from app.services.analysis_service import analysis_service
 from app.services.mistral_service import MistralService
 from app.core.config import settings
+from app.main import limiter
 
 router = APIRouter()
+
+# 并发上限：限制同时运行的昂贵 LLM 编排数，避免单机被打满。
+# 与按 IP 的限流互补——限流挡住单一来源刷量，信号量挡住全局并发洪峰。
+_ANALYSIS_SEM = asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_ANALYSES", "4")))
 
 def convert_pdf_to_images(pdf_content: bytes) -> List[Tuple[bytes, str]]:
     """将PDF转换为图片列表，返回 [(image_bytes, file_type), ...]"""
@@ -528,7 +534,9 @@ async def stream_analysis(
 # ─── V2: LangGraph 编排路径 ────────────────────────────────────────────────────
 
 @router.post("/stream/v2")
+@limiter.limit("10/minute")  # 每 IP 每分钟 10 次，防止任意 IP 烧光 API 预算
 async def stream_analysis_v2(
+    request: Request,
     file: Optional[UploadFile] = File(None),
     description: Optional[str] = Form(None),
     quantity: int = Form(1),
@@ -588,9 +596,12 @@ async def stream_analysis_v2(
         async def _invoke():
             try:
                 config = {"configurable": {"thread_id": analysis_id}}
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: graph.invoke(state, config=config)
-                )
+                # 信号量限制全局并发：超过 MAX_CONCURRENT_ANALYSES 的请求在此排队，
+                # 而非同时挤进 graph 触发 5+ 次并发 LLM 调用。
+                async with _ANALYSIS_SEM:
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: graph.invoke(state, config=config)
+                    )
                 # 汇总结果推 complete 事件
                 review = result.get("review") or {}
                 await emitter.emit("complete", {
