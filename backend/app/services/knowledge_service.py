@@ -122,6 +122,15 @@ class KnowledgeService:
             "cost": "工时成本库",
             "feature": "特征信息库",
         }
+        # BM25 词法检索语料：与 ChromaDB 文档保持平行（同序同长）
+        # _bm25_corpus[i] 的原文对应 _bm25_ids[i] 的文档ID、_bm25_cats[i] 的分类
+        self._bm25_corpus: List[str] = []
+        self._bm25_ids: List[str] = []
+        self._bm25_cats: List[str] = []
+        # BM25 索引缓存：语料变更时置 _bm25_dirty=True，下次查询才重建，
+        # 避免在 get_context_for_query 这类 RAG 热路径上每次查询都从零重建索引。
+        self._bm25 = None
+        self._bm25_dirty: bool = True
     
     def _encode(self, text: str) -> List[float]:
         """文本向量化：优先用语义模型，模型不可用时回退到离线兜底嵌入。
@@ -153,7 +162,7 @@ class KnowledgeService:
 
             # 生成嵌入向量（模型不可用时自动回退离线兜底嵌入）
             embedding = self._encode(content)
-            
+
             # 准备元数据
             doc_metadata = {
                 "category": category,
@@ -161,15 +170,23 @@ class KnowledgeService:
                 "title": title,
                 **(metadata or {})
             }
-            
-            # 添加到集合
-            collection.add(
+
+            # upsert 而非 add：doc_id 由内容确定，重复导入同一文档幂等覆盖，
+            # 不会因 "ID already exists" 抛错，也不会产生重复文档。
+            collection.upsert(
                 ids=[doc_id],
                 embeddings=[embedding],
                 documents=[content],
                 metadatas=[doc_metadata]
             )
-            
+
+            # 同步维护 BM25 词法检索语料（按 doc_id 去重；新增才标记索引需重建）
+            if doc_id not in self._bm25_ids:
+                self._bm25_corpus.append(content)
+                self._bm25_ids.append(doc_id)
+                self._bm25_cats.append(category)
+                self._bm25_dirty = True
+
             print(f"[知识库] 已添加文档: {title} ({category})")
             return True
             
@@ -183,7 +200,16 @@ class KnowledgeService:
         category: Optional[str] = None,
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
-        """搜索相关知识"""
+        """搜索相关知识（对外接口不变，内部走 BM25+Dense 混合检索）"""
+        return self.hybrid_search(query, category=category, top_k=top_k)
+
+    def _dense_search(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """纯 dense 向量检索（原 search 逻辑，hybrid_search 的降级回退路径）"""
         collection = get_collection()
 
         if not collection:
@@ -192,12 +218,12 @@ class KnowledgeService:
         try:
             # 生成查询向量（与写入端一致：模型不可用时回退离线兜底嵌入）
             query_embedding = self._encode(query)
-            
+
             # 构建过滤条件
             where_filter = None
             if category:
                 where_filter = {"category": category}
-            
+
             # 执行搜索
             results = collection.query(
                 query_embeddings=[query_embedding],
@@ -205,7 +231,7 @@ class KnowledgeService:
                 where=where_filter,
                 include=["documents", "metadatas", "distances"]
             )
-            
+
             # 格式化结果
             formatted = []
             if results and results["documents"]:
@@ -216,13 +242,232 @@ class KnowledgeService:
                         "distance": results["distances"][0][i] if results["distances"] else 0,
                         "relevance": 1 - (results["distances"][0][i] / 2) if results["distances"] else 1
                     })
-            
+
             return formatted
-            
+
         except Exception as e:
             print(f"[知识库] 搜索失败: {e}")
             return []
-    
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        """分词：优先用 jieba（中文友好），不可用则退化为 split()。
+        机加工型号/牌号/公差串（CNMG120408、GH4169、H7/g6）作为整体 token 保留。"""
+        try:
+            import jieba
+            return [t for t in jieba.cut(text) if t.strip()]
+        except Exception:
+            return text.split()
+
+    def _ensure_bm25_corpus(self) -> None:
+        """让 BM25 语料与 ChromaDB 对齐。
+
+        以集合为权威来源：新进程冷启动、或跨进程「先 add 后 search」时，本地语料
+        可能为空 / 残缺 / 与持久化集合漂移。只要本地条目数与集合文档数不一致，
+        就整体从集合重建语料，杜绝 BM25 召回与向量库不一致。数量一致（in-process
+        增量维护即如此）则零成本跳过。
+        """
+        collection = get_collection()
+        if not collection:
+            return
+        try:
+            count = collection.count()
+        except Exception as e:
+            print(f"[知识库] 读取集合文档数失败: {e}")
+            return
+
+        # 已对齐：无需任何回填，热路径零开销
+        if len(self._bm25_ids) == count:
+            return
+
+        # 集合已清空 → 同步清空本地语料，避免命中已删除文档
+        if count == 0:
+            self._bm25_corpus, self._bm25_ids, self._bm25_cats = [], [], []
+            self._bm25_dirty = True
+            return
+
+        try:
+            data = collection.get(include=["documents", "metadatas"])
+            ids = data.get("ids") or []
+            docs = data.get("documents") or []
+            metas = data.get("metadatas") or []
+            self._bm25_ids = list(ids)
+            self._bm25_corpus = [docs[i] if i < len(docs) else "" for i in range(len(ids))]
+            self._bm25_cats = [
+                (metas[i] or {}).get("category", "") if i < len(metas) else ""
+                for i in range(len(ids))
+            ]
+            self._bm25_dirty = True  # 语料整体重建 → 索引需重建
+        except Exception as e:
+            print(f"[知识库] BM25 语料回填失败: {e}")
+
+    def _build_bm25(self):
+        """构建并缓存 BM25Okapi 索引。
+
+        语料未变更（_bm25_dirty=False）则直接复用缓存，避免在 RAG 热路径上每次
+        查询都重新分词+重建索引。rank_bm25 不可用或语料为空时返回 None（触发降级）。
+        """
+        if not self._bm25_corpus:
+            self._bm25 = None
+            return None
+        if self._bm25 is not None and not self._bm25_dirty:
+            return self._bm25
+        try:
+            from rank_bm25 import BM25Okapi
+        except Exception as e:
+            print(f"[知识库] rank_bm25 不可用，降级为纯 dense: {e}")
+            return None
+        tokenized_corpus = [self._tokenize(d) for d in self._bm25_corpus]
+        self._bm25 = BM25Okapi(tokenized_corpus)
+        self._bm25_dirty = False
+        return self._bm25
+
+    def hybrid_search(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """BM25 词法检索 + Dense 向量检索，用 RRF 融合。
+
+        刀片型号/材料牌号/公差串/GB标准号等精确 token 由 BM25 兜底，
+        语义相近内容由 dense 兜底，二者排名经 RRF (1/(60+rank)) 融合。
+        语料为空（知识库未初始化）时安全降级为纯 dense 检索。
+        """
+        collection = get_collection()
+
+        if not collection:
+            return []
+
+        # 对齐语料 → 构建/复用 BM25 索引；任一环节不可用即安全降级为纯 dense
+        self._ensure_bm25_corpus()
+        bm25 = self._build_bm25()
+        if bm25 is None:
+            # 语料为空（知识库未初始化）或 rank_bm25 缺失 → 纯 dense 返回，不报错
+            return self._dense_search(query, category=category, top_k=top_k)
+
+        try:
+            # ---- BM25 词法排名 ----
+            # 用 get_scores 而非 get_top_n：get_top_n 会把零分（与查询无任何词法重叠）的
+            # 文档也凑满 n 个并按下标 tie-break 返回，这些文档进入 RRF 会污染融合排名。
+            # 这里只保留命中（score>0）的文档，再按分数降序，必要时按分类过滤。
+            query_tokens = self._tokenize(query)
+            scores = bm25.get_scores(query_tokens)
+            scored = [
+                (self._bm25_ids[i], scores[i])
+                for i in range(len(scores))
+                if scores[i] > 0 and (category is None or self._bm25_cats[i] == category)
+            ]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            bm25_ranked = [doc_id for doc_id, _ in scored[:min(100, len(scored))]]
+
+            # ---- Dense 向量排名 ----（与写入端一致：模型不可用时回退离线兜底嵌入）
+            query_embedding = self._encode(query)
+            where_filter = {"category": category} if category else None
+            n_dense = min(100, collection.count()) or top_k
+            dense_res = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_dense,
+                where=where_filter,
+                include=["documents", "metadatas", "distances"]
+            )
+            dense_ids = dense_res["ids"][0] if dense_res.get("ids") else []
+            dense_detail: Dict[str, Dict[str, Any]] = {}
+            for i, did in enumerate(dense_ids):
+                dense_detail[did] = {
+                    "content": dense_res["documents"][0][i] if dense_res.get("documents") else "",
+                    "metadata": dense_res["metadatas"][0][i] if dense_res.get("metadatas") else {},
+                    "distance": dense_res["distances"][0][i] if dense_res.get("distances") else 0,
+                }
+            dense_ranked = list(dense_ids)
+
+            # ---- RRF 融合：score[doc_id] += 1 / (60 + rank) ----
+            rrf: Dict[str, float] = {}
+            for rank, did in enumerate(dense_ranked):
+                rrf[did] = rrf.get(did, 0.0) + 1.0 / (60 + rank)
+            for rank, did in enumerate(bm25_ranked):
+                rrf[did] = rrf.get(did, 0.0) + 1.0 / (60 + rank)
+
+            if not rrf:
+                return self._dense_search(query, category=category, top_k=top_k)
+
+            fused_ids = sorted(rrf, key=lambda d: rrf[d], reverse=True)[:top_k]
+
+            # 补齐仅 BM25 命中（不在 dense top-N）文档的正文/元数据/向量
+            missing = [did for did in fused_ids if did not in dense_detail]
+            if missing:
+                self._fill_missing_detail(missing, query_embedding, dense_detail)
+
+            # ---- 组装结果 ----
+            # relevance 一律保持原有不变式 relevance == 1 - distance/2：
+            # dense 命中用其返回的 distance；仅 BM25 命中的用与查询向量的余弦距离还原，
+            # 不再使用任何与下游阈值耦合的魔数。
+            formatted: List[Dict[str, Any]] = []
+            for did in fused_ids:
+                detail = dense_detail.get(did)
+                if not detail:
+                    continue
+                distance = detail.get("distance", 0)
+                formatted.append({
+                    "content": detail.get("content", ""),
+                    "metadata": detail.get("metadata", {}),
+                    "distance": distance,
+                    "relevance": 1 - (distance / 2),
+                    "rrf_score": rrf[did],
+                })
+
+            return formatted
+
+        except Exception as e:
+            print(f"[知识库] 混合检索失败，降级为纯 dense: {e}")
+            return self._dense_search(query, category=category, top_k=top_k)
+
+    def _fill_missing_detail(
+        self,
+        missing: List[str],
+        query_embedding: List[float],
+        dense_detail: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """为仅 BM25 命中（未进 dense top-N）的文档补齐正文/元数据，并用其向量与查询
+        向量的余弦距离还原 distance，使 relevance 仍满足 1 - distance/2 不变式。"""
+        collection = get_collection()
+        if not collection or not missing:
+            return
+        try:
+            extra = collection.get(
+                ids=missing,
+                include=["documents", "metadatas", "embeddings"]
+            )
+        except Exception as e:
+            print(f"[知识库] 补齐 BM25 命中文档失败: {e}")
+            return
+
+        ids = extra.get("ids") or []
+        docs = extra.get("documents") or []
+        metas = extra.get("metadatas") or []
+        embs = extra.get("embeddings")
+
+        try:
+            import numpy as np
+            q = np.asarray(query_embedding, dtype=float)
+            q_norm = float(np.linalg.norm(q)) or 1.0
+        except Exception:
+            np = None
+            q = q_norm = None
+
+        for i, did in enumerate(ids):
+            distance = 0.0
+            if np is not None and embs is not None and i < len(embs) and embs[i] is not None:
+                v = np.asarray(embs[i], dtype=float)
+                v_norm = float(np.linalg.norm(v)) or 1.0
+                cos = float(np.dot(q, v) / (q_norm * v_norm))
+                distance = 1.0 - cos  # 余弦距离，与 ChromaDB cosine 空间口径一致
+            dense_detail[did] = {
+                "content": docs[i] if i < len(docs) else "",
+                "metadata": metas[i] if i < len(metas) else {},
+                "distance": distance,
+            }
+
     def get_context_for_query(self, query: str, max_chars: int = 2000) -> str:
         """获取查询相关的上下文（用于RAG）"""
         results = self.search(query, top_k=3)
