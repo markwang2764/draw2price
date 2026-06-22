@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from ..state import AnalysisState
-from ..tools import EquipmentMatcher, StreamEventEmitter
+from ..tools import EquipmentMatcher, KnowledgeRetriever, StreamEventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,17 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
+
+
+def _safe_retrieve(retriever: KnowledgeRetriever, query: str, category: str, top_k: int = 2) -> list[str]:
+    """RAG 检索的安全包装：知识库未初始化/检索异常时返回空列表，绝不让节点失败。
+    返回命中文档的正文字符串列表（已剥离元数据），供注入 prompt。"""
+    try:
+        hits = retriever.retrieve(query, category=category, top_k=top_k) or []
+        return [h.get("content", "") for h in hits if h.get("content")]
+    except Exception as e:  # 知识库未初始化 / chromadb 为空 / 检索异常
+        logger.warning("RAG retrieve failed (query=%r, category=%s): %s", query, category, e)
+        return []
 
 
 def _emitter(state: AnalysisState) -> Optional[StreamEventEmitter]:
@@ -127,6 +138,8 @@ def gcode_node(state: AnalysisState) -> Dict[str, Any]:
     steps = process_plan.get("steps", [])
     resources = _get_resources()
     matcher = EquipmentMatcher(resources.get("equipment", []))
+    retriever = KnowledgeRetriever()
+    material = (state.get("part_analysis") or {}).get("material", "")
 
     _emit(state, "thinking", step=3, title="G代码生成", content=f"正在为 {len(steps)} 道工序生成 G 代码...")
 
@@ -138,7 +151,16 @@ def gcode_node(state: AnalysisState) -> Dict[str, Any]:
             equipment = matcher.match(step.get("equipment_type")) or {}
             _emit(state, "thinking", step=3, title="G代码生成",
                   content=f"工序 {idx}/{len(steps)}: {step.get('process_name', '')}...")
-            gcode = _run_async(mistral.generate_gcode(step, equipment))
+            # RAG：检索本工序+材料相关的刀具/切削参数知识，注入内部字段 _tool_rag
+            process_name = step.get("process_name", "")
+            tool_rag = _safe_retrieve(
+                retriever,
+                f"{process_name} {material} 刀具参数 切削速度",
+                category="tool",
+                top_k=2,
+            )
+            step_with_ctx = {**step, "_tool_rag": tool_rag}
+            gcode = _run_async(mistral.generate_gcode(step_with_ctx, equipment))
             gcode_programs.append(gcode)
 
         updates = {"gcode_programs": gcode_programs}
@@ -163,8 +185,18 @@ def schedule_node(state: AnalysisState) -> Dict[str, Any]:
     try:
         mistral = _get_mistral()
         resources = _get_resources()
+        # RAG：检索工时/机床利用率相关知识，注入内部字段 _time_rag
+        retriever = KnowledgeRetriever()
+        part_name = (state.get("part_analysis") or {}).get("part_name", "")
+        time_rag = _safe_retrieve(
+            retriever,
+            f"{part_name} 工时 机床利用率",
+            category="cost",
+            top_k=2,
+        )
+        plan_with_ctx = {**process_plan, "_time_rag": time_rag}
         schedule = _run_async(mistral.generate_schedule(
-            process_plan,
+            plan_with_ctx,
             resources,
             input_data.get("quantity", 1),
             input_data.get("priority", "normal"),

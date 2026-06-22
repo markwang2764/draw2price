@@ -491,15 +491,23 @@ G代码要求：
 3. 注释清晰
 4. 切削参数合理"""
 
+        # RAG：取出编排层注入的刀具知识（内部字段，不参与 JSON 序列化展示）
+        step_for_prompt = {k: v for k, v in process_step.items() if k != "_tool_rag"}
+        rag_context = process_step.get("_tool_rag") or []
+        rag_section = ""
+        if rag_context:
+            rag_section = "\n\n【刀具参考知识】（来自知识库检索，请据此选择刀具与切削参数）\n" + \
+                "\n---\n".join(rag_context)
+
         messages = [
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""工序信息：
-{json.dumps(process_step, ensure_ascii=False, indent=2)}
+{json.dumps(step_for_prompt, ensure_ascii=False, indent=2)}
 
 设备信息：
-{json.dumps(equipment, ensure_ascii=False, indent=2)}
+{json.dumps(equipment, ensure_ascii=False, indent=2)}{rag_section}
 
 请生成该工序的G代码程序。"""
             }
@@ -529,17 +537,25 @@ G代码要求：
 
 根据工艺方案生成任务列表。只输出JSON！"""
 
+        # RAG：取出编排层注入的工时知识（内部字段，不参与 JSON 序列化展示）
+        plan_for_prompt = {k: v for k, v in process_plan.items() if k != "_time_rag"}
+        time_rag = process_plan.get("_time_rag") or []
+        rag_section = ""
+        if time_rag:
+            rag_section = "\n\n【工时参考知识】（来自知识库检索，请据此估算工时与利用率）\n" + \
+                "\n---\n".join(time_rag)
+
         messages = [
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""工艺方案：
-{json.dumps(process_plan, ensure_ascii=False, indent=2)}
+{json.dumps(plan_for_prompt, ensure_ascii=False, indent=2)}
 
 公司资源：
 设备：{json.dumps(company_resources.get('equipment', []), ensure_ascii=False, indent=2)}
 人员：{json.dumps(company_resources.get('personnel', []), ensure_ascii=False, indent=2)}
-工作时间：{json.dumps(company_resources.get('working_hours', {}), ensure_ascii=False, indent=2)}
+工作时间：{json.dumps(company_resources.get('working_hours', {}), ensure_ascii=False, indent=2)}{rag_section}
 
 生产要求：
 - 数量：{quantity} 件
