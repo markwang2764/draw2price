@@ -49,3 +49,6 @@ WechatIMG*.jpg
 
 # ===== 任务编排本地状态 =====
 .taskboard/
+
+# 训练数据(生成物,不入库)
+training/data/*.json

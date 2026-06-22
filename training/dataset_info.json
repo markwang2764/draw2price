@@ -1,0 +1,11 @@
+{
+  "machining_sft": {
+    "file_name": "data/machining_sft.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output",
+      "system": "system"
+    }
+  }
+}

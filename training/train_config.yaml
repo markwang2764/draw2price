@@ -1,0 +1,48 @@
+# LLaMA-Factory QLoRA 训练配置 —— Qwen2.5-7B-Instruct，单卡 24GB(4090) 可跑。
+# 运行: conda activate machining-llm && llamafactory-cli train train_config.yaml
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+quantization_bit: 4              # QLoRA，省显存
+lora_rank: 64
+lora_alpha: 128
+lora_dropout: 0.05
+lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+
+### dataset
+dataset: machining_sft          # 见 dataset_info.json
+dataset_dir: .                  # dataset_info.json 与 data/ 都在 training/ 下
+template: qwen
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+### output
+output_dir: ./machining-qwen-lora
+logging_steps: 5
+save_steps: 100
+save_total_limit: 3
+overwrite_output_dir: true
+plot_loss: true
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8  # 有效 batch=16
+learning_rate: 2.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+
+### eval（可选：留出 5% 作验证）
+val_size: 0.05
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 100
