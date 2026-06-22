@@ -73,8 +73,13 @@ class MistralService:
         # 视觉模型：优先使用环境变量配置
         self.vision_model = getattr(settings, 'vision_model', None) or "llava"
         
-        # 判断是否使用云端API（OpenAI兼容格式）
-        self.is_cloud_api = any(x in self.base_url for x in ["siliconflow", "openai", "api2d", "closeai"])
+        # 判断是否使用 OpenAI 兼容格式（/chat/completions + image_url 视觉格式）。
+        # 约定：带 /v1 的端点即 OpenAI 兼容（Mistral 官方、Ollama 的 /v1、硅基流动等都属此类）；
+        # 仅当 base_url 是 Ollama 原生端点(无 /v1)时才走 Ollama 原生 images 格式。
+        self.is_cloud_api = (
+            "/v1" in self.base_url
+            or any(x in self.base_url for x in ["siliconflow", "openai", "api2d", "closeai"])
+        )
         print(f"[AI] 模型: {self.model}, 视觉模型: {self.vision_model}")
         print(f"[AI] API地址: {self.base_url}")
     
