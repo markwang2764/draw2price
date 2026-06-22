@@ -12,18 +12,34 @@ from pathlib import Path
 _chroma_client = None
 _embedding_model = None
 _embedding_model_failed = False  # 记录模型加载已失败，避免每次写入都重试联网（离线时会很慢）
+_embedding_dim = None  # 模型加载成功后记录其输出维度（用于维度一致性校验）
 _collection = None
 
 KNOWLEDGE_DIR = Path(__file__).parent.parent.parent / "knowledge_base"
 CHROMA_DIR = KNOWLEDGE_DIR / "chroma_db"
 
-# 离线兜底嵌入维度（与语义模型无关，仅在模型不可用时使用，必须全库一致）
+# 离线兜底嵌入维度（仅在「全新空库 + 模型不可用」时使用；有数据时跟随集合实际维度）
 FALLBACK_EMBEDDING_DIM = 256
+
+# ChromaDB 距离度量。必须是 cosine：全库的 relevance=1-distance/2 与 _fill_missing_detail
+# 的余弦距离回填都以 [0,2] 的余弦距离为前提；默认 L2 距离可达任意大，会算出负 relevance、
+# 污染排序，并使 get_context_for_query 的 relevance<0.3 过滤把所有结果误删。
+EMBEDDING_SPACE = "cosine"
+_COLLECTION_NAME = "manufacturing_knowledge"
+_COLLECTION_METADATA = {"description": "制造工艺知识库", "hnsw:space": EMBEDDING_SPACE}
 
 
 def _stable_hash(s: str) -> int:
     """跨进程稳定的哈希（内置 hash() 会受 PYTHONHASHSEED 随机化，不能用于持久化场景）"""
     return int(hashlib.md5(s.encode("utf-8")).hexdigest(), 16)
+
+
+def _relevance_from_distance(distance: float) -> float:
+    """余弦距离 [0,2] → relevance [0,1]。钳制以吸收浮点误差/异常距离，绝不返回负值。"""
+    try:
+        return max(0.0, min(1.0, 1.0 - float(distance) / 2.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _fallback_embedding(text: str, dim: int = FALLBACK_EMBEDDING_DIM) -> List[float]:
@@ -49,36 +65,99 @@ def _fallback_embedding(text: str, dim: int = FALLBACK_EMBEDDING_DIM) -> List[fl
     return vec
 
 
+def _cached_model_snapshots() -> List[Path]:
+    """扫描 cache_folder 下已完整缓存的 sentence-transformers 快照目录。
+
+    HuggingFace 缓存布局为 models--<org>--<name>/snapshots/<rev>/。一个快照只有同时具备
+    config.json 与权重文件才算完整、可直接按本地路径离线加载（绕开 hub 的联网 revision 解析，
+    这是默认模型未预下载时仍能离线起服务的关键）。
+    """
+    models_dir = KNOWLEDGE_DIR / "models"
+    if not models_dir.exists():
+        return []
+    snaps = []
+    for snap in models_dir.glob("models--*/snapshots/*"):
+        if not snap.is_dir():
+            continue
+        has_cfg = (snap / "config.json").exists()
+        has_weights = (snap / "model.safetensors").exists() or (snap / "pytorch_model.bin").exists()
+        if has_cfg and has_weights:
+            snaps.append(snap)
+    return snaps
+
+
 def get_embedding_model():
-    """获取嵌入模型（延迟加载，使用国内镜像）"""
-    global _embedding_model, _embedding_model_failed
-    # 之前已加载失败（如离线/无缓存）则不再重试，直接返回 None 交由调用方走兜底嵌入，
-    # 避免批量写入时每条都重复联网超时。
+    """获取嵌入模型（延迟加载）。
+
+    依次尝试：环境变量/默认配置的模型 → 本地已缓存的快照（按路径直接加载，离线可用）。
+    全部失败才返回 None，由调用方走离线兜底嵌入。加载成功时记录输出维度，供维度一致性校验。
+    """
+    global _embedding_model, _embedding_model_failed, _embedding_dim
     if _embedding_model_failed:
         return None
-    if _embedding_model is None:
+    if _embedding_model is not None:
+        return _embedding_model
+
+    try:
+        from sentence_transformers import SentenceTransformer
+    except Exception as e:
+        print(f"[知识库] sentence-transformers 不可用: {e}（使用离线兜底嵌入）")
+        _embedding_model_failed = True
+        return None
+
+    # 仅在用户未显式配置时才设国内镜像，避免覆盖离线模式(HF_HUB_OFFLINE)或自定义端点
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    cache_folder = str(KNOWLEDGE_DIR / "models")
+
+    # bge-large-zh-v1.5: 中文技术文本专用；不可用时回退到任何本地已缓存模型（如
+    # paraphrase-multilingual-MiniLM-L12-v2），保证离线/新机器仍能起服务。
+    configured = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+    candidates: List[str] = [configured]
+    candidates += [str(p) for p in _cached_model_snapshots() if str(p) != configured]
+
+    for cand in candidates:
         try:
-            import os
-            # 设置国内镜像（HuggingFace Mirror）
-            os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-
-            from sentence_transformers import SentenceTransformer
-            print("[知识库] 正在从国内镜像加载嵌入模型...")
-
-            # 使用支持中文的模型
-            # bge-large-zh-v1.5: 中文技术文本专用，对机加工数值/型号 token 校准更好
-            # 备选: paraphrase-multilingual-MiniLM-L12-v2（通用，对数值辨识差）
-            model_name = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
-            _embedding_model = SentenceTransformer(
-                model_name,
-                cache_folder=str(KNOWLEDGE_DIR / "models")
-            )
-            print(f"[知识库] 嵌入模型加载完成: {model_name}")
+            print(f"[知识库] 尝试加载嵌入模型: {cand}")
+            model = SentenceTransformer(cand, cache_folder=cache_folder)
+            _embedding_model = model
+            _embedding_dim = model.get_sentence_embedding_dimension()
+            print(f"[知识库] 嵌入模型加载完成: {cand} (dim={_embedding_dim})")
+            return _embedding_model
         except Exception as e:
-            print(f"[知识库] 嵌入模型加载失败: {e}（后续将使用离线兜底嵌入）")
-            _embedding_model_failed = True
+            print(f"[知识库] 加载失败 {cand}: {e}")
+
+    print("[知识库] 所有候选嵌入模型均不可用，改用离线兜底嵌入")
+    _embedding_model_failed = True
+    return None
+
+
+def _existing_collection_dim() -> Optional[int]:
+    """探测已持久化集合的向量维度（取一条样本的 embedding 长度）。空库返回 None。"""
+    try:
+        col = get_collection()
+        if not col or col.count() == 0:
             return None
-    return _embedding_model
+        peek = col.get(limit=1, include=["embeddings"])
+        embs = peek.get("embeddings")
+        if embs is not None and len(embs) > 0 and embs[0] is not None:
+            return len(embs[0])
+    except Exception as e:
+        print(f"[知识库] 探测集合维度失败: {e}")
+    return None
+
+
+def _active_embedding_dim() -> int:
+    """当前应使用的嵌入维度。
+
+    模型已加载 → 模型维度；否则跟随已有集合维度（保证离线兜底向量能写入/检索同一个库，
+    根治 "Collection expecting embedding with dimension of X, got Y"）；全新空库 → 兜底默认值。
+    """
+    if _embedding_dim:
+        return _embedding_dim
+    dim = _existing_collection_dim()
+    if dim:
+        return dim
+    return FALLBACK_EMBEDDING_DIM
 
 
 def get_collection():
@@ -98,11 +177,24 @@ def get_collection():
                 settings=Settings(anonymized_telemetry=False)
             )
             
-            # 获取或创建集合
+            # 获取或创建集合（cosine 空间）
             _collection = _chroma_client.get_or_create_collection(
-                name="manufacturing_knowledge",
-                metadata={"description": "制造工艺知识库"}
+                name=_COLLECTION_NAME,
+                metadata=dict(_COLLECTION_METADATA),
             )
+            # 迁移：旧集合可能用默认 L2 空间（建库时漏设 hnsw:space），relevance=1-distance/2
+            # 在 L2 下会得到负值/错排。空间一经创建无法原地修改，只能删除重建。集合是可由
+            # init_default_knowledge / 上传重新填充的派生缓存，重建安全（旧 L2 数据本就不可用）。
+            space = (_collection.metadata or {}).get("hnsw:space")
+            if space != EMBEDDING_SPACE:
+                cnt = _collection.count()
+                print(f"[知识库] 集合距离度量为 {space!r}≠{EMBEDDING_SPACE}，删除重建"
+                      f"（原 {cnt} 条，需重新 init / 上传填充）")
+                _chroma_client.delete_collection(_COLLECTION_NAME)
+                _collection = _chroma_client.create_collection(
+                    name=_COLLECTION_NAME,
+                    metadata=dict(_COLLECTION_METADATA),
+                )
             print(f"[知识库] ChromaDB初始化完成，当前文档数: {_collection.count()}")
         except Exception as e:
             print(f"[知识库] ChromaDB初始化失败: {e}")
@@ -141,7 +233,8 @@ class KnowledgeService:
                 return model.encode(text).tolist()
             except Exception as e:
                 print(f"[知识库] 模型编码失败，改用离线兜底嵌入: {e}")
-        return _fallback_embedding(text)
+        # 兜底向量维度跟随激活维度（已有集合维度 / 模型维度），避免与持久化集合维度冲突
+        return _fallback_embedding(text, dim=_active_embedding_dim())
 
     def add_document(
         self,
@@ -240,7 +333,7 @@ class KnowledgeService:
                         "content": doc,
                         "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
                         "distance": results["distances"][0][i] if results["distances"] else 0,
-                        "relevance": 1 - (results["distances"][0][i] / 2) if results["distances"] else 1
+                        "relevance": _relevance_from_distance(results["distances"][0][i]) if results["distances"] else 1.0
                     })
 
             return formatted
@@ -412,7 +505,7 @@ class KnowledgeService:
                     "content": detail.get("content", ""),
                     "metadata": detail.get("metadata", {}),
                     "distance": distance,
-                    "relevance": 1 - (distance / 2),
+                    "relevance": _relevance_from_distance(distance),
                     "rrf_score": rrf[did],
                 })
 
