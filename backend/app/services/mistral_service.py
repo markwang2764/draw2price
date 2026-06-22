@@ -16,6 +16,11 @@ from tenacity import (
 from app.core.config import settings
 
 
+def _is_local_endpoint(url: str) -> bool:
+    """是否为本地模型端点（如 Ollama）。本地端点无需 API key。"""
+    return any(h in (url or "") for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+
+
 def _is_retryable_api_error(exc: BaseException) -> bool:
     """仅对可重试的错误重试：429(限流) 与 5xx(服务端) 以及网络层超时/连接错误。
 
@@ -25,6 +30,10 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         return code == 429 or 500 <= code < 600
+    # 本地协议错误（如请求头非法）是构造问题，重试不会变好 —— 不重试。
+    # 注意：LocalProtocolError 是 httpx.TransportError 的子类，必须在下面的 TransportError 之前拦截。
+    if isinstance(exc, httpx.LocalProtocolError):
+        return False
     # 超时/连接类网络错误也值得重试
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return True
@@ -133,10 +142,16 @@ class MistralService:
         如需纯文本输出可显式传 json_mode=False。
         """
         use_model = model or self.model
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
+        # 空 key + 云端地址：提前给出清晰错误，避免拼出非法请求头 "Bearer " 触发
+        # 难懂的 LocalProtocolError，也避免无谓的重试。
+        if not self.api_key and not _is_local_endpoint(self.base_url):
+            raise RuntimeError(
+                "未配置 MISTRAL_API_KEY：请在 backend/.env 设置 MISTRAL_API_KEY，"
+                "或将 MISTRAL_BASE_URL 指向本地模型(如 Ollama)。"
+            )
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         payload = {
             "model": use_model,
@@ -174,7 +189,14 @@ class MistralService:
         Ollama 走 format=json），降低视觉模型返回非 JSON 文本的概率。
         """
         import base64
-        
+
+        # 空 key + 云端地址：提前清晰报错（同 _call_api）
+        if not self.api_key and not _is_local_endpoint(self.base_url):
+            raise RuntimeError(
+                "未配置 MISTRAL_API_KEY：请在 backend/.env 设置 MISTRAL_API_KEY，"
+                "或将 MISTRAL_BASE_URL 指向本地模型(如 Ollama)。"
+            )
+
         # 确保base64没有前缀
         if "," in image_base64:
             image_base64 = image_base64.split(",")[1]
@@ -222,10 +244,9 @@ class MistralService:
             }
             if json_mode:
                 payload["response_format"] = {"type": "json_object"}
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
         else:
             # Ollama本地格式
             payload = {

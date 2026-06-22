@@ -103,6 +103,7 @@ async def test_call_api_no_retry_on_401(monkeypatch):
     monkeypatch.setattr(ms.httpx, "AsyncClient", FakeClient)
 
     svc = ms.MistralService()
+    svc.api_key = "test-key"  # 非空 key 以通过空 key 守卫
     with pytest.raises(httpx.HTTPStatusError):
         await svc._call_api([{"role": "user", "content": "hi"}])
     assert calls["n"] == 1, f"401 不应重试，但 post 调用了 {calls['n']} 次"
@@ -117,6 +118,7 @@ async def test_call_api_retries_on_429_then_succeeds(monkeypatch):
     monkeypatch.setattr(ms.httpx, "AsyncClient", FakeClient)
 
     svc = ms.MistralService()
+    svc.api_key = "test-key"  # 非空 key 以通过空 key 守卫
     result = await svc._call_api([{"role": "user", "content": "hi"}])
     assert result == '{"ok": true}'
     assert calls["n"] == 2, f"429 应触发重试，期望 2 次 post，实际 {calls['n']} 次"
@@ -131,6 +133,7 @@ async def test_call_api_retries_5xx_up_to_three_attempts(monkeypatch):
     monkeypatch.setattr(ms.httpx, "AsyncClient", FakeClient)
 
     svc = ms.MistralService()
+    svc.api_key = "test-key"  # 非空 key 以通过空 key 守卫
     with pytest.raises(httpx.HTTPStatusError):
         await svc._call_api([{"role": "user", "content": "hi"}])
     assert calls["n"] == 3, f"5xx 应重试到 3 次上限，实际 {calls['n']} 次"

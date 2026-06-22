@@ -53,7 +53,9 @@ def real_service(monkeypatch):
 
     monkeypatch.setattr(ms.httpx, "AsyncClient", _CapturingClient)
     _CapturingClient.captured_payload = None
-    return ms.MistralService()
+    svc = ms.MistralService()
+    svc.api_key = "test-key"  # 非空 key 以通过空 key 守卫，进入请求构造路径
+    return svc
 
 
 @pytest.mark.asyncio
