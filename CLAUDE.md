@@ -56,20 +56,35 @@ cd frontend && npm run dev         # 前端 :3000
 5. **先骨架后填充**:M0 占位流水线先跑通,再逐个换真 agent。
 
 ### 模块与进度
-| # | 模块 | spec | 状态 |
-|---|------|------|------|
-| M0 | 编排骨架+工具抽取 | (spec 目录暂缺) | ✅ 跑通(占位流水线,测试绿) |
-| M1 | 识别Agent | (待写) | 下一步 |
-| M2 | 工艺Agent | (待写) | - |
-| M3 | G代码Agent(并行) | (待写) | - |
-| M4 | 排产Agent | (待写) | - |
-| M5 | 报价Agent | (待写) | - |
-| M6 | 审查Agent ★灵魂 | (待写) | - |
-| M7 | 流式整合 | (待写) | - |
+| # | 模块 | 状态 |
+|---|------|------|
+| Phase1 | 安全底线(CORS/APIKey/SQLite/参数校验/Embedding升级) | ✅ 已完成 |
+| Phase2 | 编排层(M1~M6/SSE桥接/graph拓扑/v2端点) | ✅ 已完成 |
+| Phase3 | RAG增强(BM25混合/知识扩充/gcode+schedule接RAG) | ✅ 已完成 |
+| Phase4 | 生产加固(限流/重试/G代码语法校验) | ✅ 已完成 |
+| Phase5 | 训练数据管道(SFT导出脚本) | ✅ 已完成 |
 
-> 注:`agent-orchestra/specs/` 目录当前不存在,MCP 板子链路暂断。
-> M0 已由主控直接落地(非走 Cursor):骨架在 `backend/app/orchestration/`,
-> 6 节点为占位实现,`pytest tests/test_orchestration tests/test_tools` 全绿。
+> 编排骨架/6节点真实接入在 `backend/app/orchestration/`,
+> `pytest tests/`(含 test_orchestration/test_tools/test_services)全绿。
+
+### 本次进展(2026-06-22)Phase3~5 批次落地
+- **Phase3 RAG 增强**:
+  - BM25+Dense 混合检索(RRF 融合):`knowledge_service.hybrid_search`,刀片型号/
+    材料牌号/公差串/GB标准号等精确 token 由 BM25 兜底;`search()` 内部改走它,
+    接口不变;模型不可用/语料空时安全降级纯 dense(统一走 `_encode` 离线兜底)。
+  - 默认知识库扩充至 40+ 条(TC4/GH4169/深孔/螺纹等),category 统一五类。
+  - `gcode_node`/`schedule_node` 接 RAG:注入内部字段 `_tool_rag`/`_time_rag`,
+    在 mistral_service 拼入 prompt(不改函数签名/返回结构),检索异常降级空。
+- **Phase4 生产加固**:slowapi 限流(/stream/v2 每IP 10/min)+ 并发信号量;
+  `_call_api`/`_call_vision_api` 加 tenacity 指数退避重试(只重试 429/5xx);
+  新增 `gcode_validator.validate_gcode`(ISO 6983 无效G/M码+行程越界),
+  接入 review_node Rule 6。
+- **Phase5 训练数据管道**:`scripts/export_sft_data.py` 导出 analyses.db →
+  LLaMA-Factory alpaca 格式 SFT 数据。
+- 全量 `pytest tests/` = 73 passed / 1 skipped。
+- 协作说明:本批 6 任务经 task-board(/Users/mark/mark_dev/harness)+ auto-runner
+  并行执行;#1(BM25)、#5(G代码校验)因 auto-runner 合并/环境问题 blocked,
+  由主控手动 merge/捞回落到 main 并补 venv 依赖(rank-bm25/jieba)。
 
 ### 本次进展(2026-06-19)
 - **修复启动崩溃**:`config.py` 的 Settings 未声明 `.env` 里的 `DATABASE_URL`,

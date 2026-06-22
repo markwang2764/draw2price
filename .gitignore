@@ -17,6 +17,7 @@ __pycache__/
 # ===== Node / 前端 =====
 node_modules/
 frontend/node_modules/
+frontend/node_modules
 frontend/dist/
 dist/
 *.log
@@ -45,3 +46,6 @@ WechatIMG*.jpg
 .DS_Store
 .idea/
 .vscode/
+
+# ===== 任务编排本地状态 =====
+.taskboard/
